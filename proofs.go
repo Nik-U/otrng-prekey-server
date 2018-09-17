@@ -2,6 +2,7 @@ package prekeyserver
 
 import (
 	"bytes"
+	"crypto/rand"
 	"math/big"
 
 	"github.com/coyim/gotrax"
@@ -18,7 +19,7 @@ type dhProof struct {
 	v *big.Int
 }
 
-const lambda = uint32(352)
+const lambda = uint32(352 / 8)
 
 func bufferIsZero(b []byte) bool {
 	for _, v := range b {
@@ -29,17 +30,16 @@ func bufferIsZero(b []byte) bool {
 	return true
 }
 
-func generateRandomGroupValue(len uint, wr gotrax.WithRandom) []byte {
-	b := make([]byte, len)
-
+func generateRandomExponent(order *big.Int, wr gotrax.WithRandom) *big.Int {
 	for {
-		gotrax.RandomInto(wr, b)
-		if !bufferIsZero(b) {
-			return b
+		n, err := rand.Int(wr.RandReader(), order)
+		if err != nil {
+			return nil
+		}
+		if n.Cmp(one) > 0 {
+			return n
 		}
 	}
-
-	return nil
 }
 
 // splitBufferIntoN will split b into n even sized units
@@ -56,9 +56,9 @@ func splitBufferIntoN(b []byte, n uint) [][]byte {
 
 // m should be 64 bytes
 func generateEcdhProof(wr gotrax.WithRandom, values []*gotrax.Keypair, m []byte, usageID uint8) (*ecdhProof, error) {
-	rbuf := generateRandomGroupValue(56, wr)
-	r := ed448.NewScalar(rbuf)
-	a := ed448.PrecomputedScalarMul(r)
+	key := gotrax.GenerateKeypair(wr)
+	r := key.Priv.K()
+	a := key.Pub.K()
 
 	cbuf := gotrax.SerializePoint(a)
 	for _, v := range values {
@@ -121,9 +121,8 @@ func mulMod(l, r, m *big.Int) *big.Int {
 }
 
 func generateDhProof(wr gotrax.WithRandom, valuesPrivate []*big.Int, valuesPublic []*big.Int, m []byte, usageID uint8) (*dhProof, error) {
-	rbuf := generateRandomGroupValue(80, wr)
-	r := new(big.Int).SetBytes(rbuf)
-	a := new(big.Int).Exp(g3, r, dhQ)
+	r := generateRandomExponent(dhQ, wr)
+	a := new(big.Int).Exp(g3, r, dhP)
 
 	cbuf := gotrax.AppendMPI([]byte{}, a)
 	for _, v := range valuesPublic {
@@ -156,14 +155,13 @@ func (px *dhProof) verify(values []*big.Int, m []byte, usageID uint8) bool {
 	curr := big.NewInt(1)
 	for ix, tn := range t {
 		tnv := new(big.Int).SetBytes(tn)
-		tnv.Exp(values[ix], tnv, dhQ)
-		curr = mulMod(curr, tnv, dhQ)
+		tnv.Exp(values[ix], tnv, dhP)
+		curr = mulMod(curr, tnv, dhP)
 	}
 
-	curr.Exp(curr, big.NewInt(-1), dhQ)
-	a := new(big.Int).Exp(g3, px.v, dhQ)
-	a = mulMod(a, curr, dhQ)
-	a.Mod(a, dhQ)
+	a := new(big.Int).Exp(g3, px.v, dhP)
+	curr.ModInverse(curr, dhP)
+	a = mulMod(a, curr, dhP)
 
 	c2buf := gotrax.AppendMPI([]byte{}, a)
 	for _, v := range values {

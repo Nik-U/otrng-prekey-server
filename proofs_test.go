@@ -1,6 +1,7 @@
 package prekeyserver
 
 import (
+	"crypto/rand"
 	"math/big"
 
 	"github.com/coyim/gotrax"
@@ -28,12 +29,15 @@ func (s *GenericServerSuite) Test_generateEcdhProof_and_verify_generatesProofsTh
 
 	m2 := [64]byte{0x02, 0x02, 0x03}
 	c.Assert(proof.verify(values2, m2[:], usageProofMessageEcdh), Equals, false)
+
+	wrongDL := gotrax.GenerateKeypair(wr)
+	values2[1] = wrongDL.Pub
+	c.Assert(proof.verify(values2, m[:], usageProofMessageEcdh), Equals, false)
 }
 
 func randomDhSecretValue(wr gotrax.WithRandom) *big.Int {
-	buf := make([]byte, 80)
-	gotrax.RandomInto(wr, buf)
-	return new(big.Int).SetBytes(buf)
+	res, _ := rand.Int(wr.RandReader(), dhQ)
+	return res
 }
 
 func (s *GenericServerSuite) Test_generateDhProof_and_verify_generatesProofsThatValidates(c *C) {
@@ -44,9 +48,9 @@ func (s *GenericServerSuite) Test_generateDhProof_and_verify_generatesProofsThat
 	valuesPriv[2] = randomDhSecretValue(wr)
 
 	valuesPub := make([]*big.Int, 3)
-	valuesPub[0] = new(big.Int).Exp(g3, valuesPriv[0], dhQ)
-	valuesPub[1] = new(big.Int).Exp(g3, valuesPriv[1], dhQ)
-	valuesPub[2] = new(big.Int).Exp(g3, valuesPriv[2], dhQ)
+	valuesPub[0] = new(big.Int).Exp(g3, valuesPriv[0], dhP)
+	valuesPub[1] = new(big.Int).Exp(g3, valuesPriv[1], dhP)
+	valuesPub[2] = new(big.Int).Exp(g3, valuesPriv[2], dhP)
 
 	m := [64]byte{0x01, 0x02, 0x03}
 
@@ -58,4 +62,8 @@ func (s *GenericServerSuite) Test_generateDhProof_and_verify_generatesProofsThat
 
 	m2 := [64]byte{0x02, 0x02, 0x03}
 	c.Assert(proof.verify(valuesPub, m2[:], usageProofMessageDh), Equals, false)
+
+	valuesPub[1].Mul(valuesPub[1], valuesPub[1])
+	valuesPub[1].Mod(valuesPub[1], dhP)
+	c.Assert(proof.verify(valuesPub, m[:], usageProofMessageDh), Equals, false)
 }
